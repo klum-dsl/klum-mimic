@@ -1,0 +1,162 @@
+import org.apache.tools.ant.filters.ReplaceTokens
+
+buildscript {
+    repositories {
+        mavenCentral()
+        jcenter()
+        maven {
+            url "https://plugins.gradle.org/m2/"
+        }
+    }
+    dependencies {
+        classpath 'ch.raffael.markdown-doclet:markdown-doclet:1.4'
+    }
+}
+
+plugins {
+    id 'groovy'
+    id 'java-library'
+    id 'jacoco'
+    id 'nebula.maven-publish' version '9.5.0'
+    id 'nebula.javadoc-jar' version '9.5.0'
+    id 'nebula.source-jar' version '9.5.0'
+    id 'nebula.release' version '9.2.0'
+    id 'nebula.contacts' version '5.0.0'
+    id 'nebula.info' version '5.0.0'
+    id "com.jfrog.bintray" version "1.8.4"
+    id "com.github.hierynomus.license" version "0.15.0"
+    id 'org.ajoberstar.git-publish' version '2.1.1'
+}
+
+apply plugin: 'ch.raffael.markdown-doclet'
+
+description 'A transformation for creating convenient configuration model DSLs.'
+group 'com.blackbuild.klum.mimic'
+
+sourceCompatibility = JavaVersion.VERSION_1_8
+targetCompatibility = JavaVersion.VERSION_1_8
+
+repositories {
+    jcenter()
+}
+
+configurations {
+    compileOnly.extendsFrom gdsl
+    testCompileOnly.extendsFrom compileOnly
+}
+
+license {
+    mapping("gdsl", "JAVADOC_STYLE")
+}
+
+dependencies {
+    compileOnly "org.codehaus.groovy:groovy-all"
+
+    testCompile("org.spockframework:spock-core:1.1-groovy-2.4")
+    testCompile "org.jetbrains:annotations:16.0.2"
+    testRuntime "net.bytebuddy:byte-buddy:1.7.5"
+    testRuntime "org.objenesis:objenesis:2.6"
+    testCompile 'com.fasterxml.jackson.core:jackson-databind:2.9.5'
+    compile "com.blackbuild.klum.common:klum-common:0.6.0-rc.2"
+}
+
+configurations.all {
+    resolutionStrategy {
+        force "org.codehaus.groovy:groovy-all:2.4.13"
+    }
+}
+
+test {
+    inputs.dir file("src/test/scenarios")
+    outputs.dir file("$buildDir/test-classes")
+}
+
+bintray {
+    user = findProperty('bintrayUser')
+    key = findProperty('bintrayApiKey')
+
+    publications = ['nebula']
+    dryRun = false
+    publish = true
+    pkg {
+        repo = 'klum-dsl'
+        userOrg = 'klum-dsl'
+        name = project.name
+        desc = project.description
+        websiteUrl = 'https://github.com/klum-dsl/klum-mimic'
+        issueTrackerUrl = 'https://github.com/klum-dsl/klum-mimic/issues'
+        vcsUrl = 'https://github.com/klum-dsl/klum-mimic.git'
+        licenses = ['MIT']
+        labels = ['groovy', 'ast']
+        publicDownloadNumbers = true
+        attributes = [:]
+        version {
+            name = project.version
+            vcsTag = project.version
+            attributes = [:]
+            gpg {
+                sign = true
+                passphrase = findProperty("signing.password")
+            }
+            mavenCentralSync {
+                sync = !version.toString().contains(".dev+")
+                user = findProperty("nexusUsername")
+                password = findProperty("nexusPassword")
+            }
+        }
+    }
+}
+
+gitPublish {
+    repoUri = 'git@github.com:klum-dsl/klum-mimic.wiki.git'
+    branch = 'master'
+
+    contents {
+        from 'wiki'
+        filesMatching('*.md') {
+            filter(ReplaceTokens, tokens: [version: version.toString()])
+        }
+        from('.') {
+            include("CHANGES.md")
+            rename('CHANGES.md', "Changelog.md")
+        }
+    }
+
+    repoDir = file("$buildDir/gitPublish")
+    
+    commitMessage = "updated wiki for $version"
+}
+
+jacoco {
+    toolVersion = "0.8.2"
+}
+
+contacts {
+    'stephan@blackbuild.com' {
+        moniker 'Stephan Pauxberger'
+        github 'pauxus'
+    }
+}
+
+publishing {
+    publications {
+        nebula(MavenPublication) {
+            pom.withXml {
+                def p = asNode()
+                p.dependencies.dependency.find { it.artifactId.text() == "groovy-all" }.appendNode('optional', true)
+                p.name.first().setValue('KlumAST')
+                p.appendNode('licenses').appendNode('license').
+                        appendNode('name', 'The MIT License (MIT)').parent().
+                        appendNode('url', 'http://opensource.org/licenses/MIT')
+            }
+        }
+    }
+}
+
+releaseCheck.doLast {
+    if (!gradle.includedBuilds.isEmpty())
+        throw new GradleException("Releasing is not allowed with composite builds. Please release $gradle.includedBuilds separately")
+}
+
+tasks.release.dependsOn tasks.build
+tasks.postRelease.dependsOn tasks.publish, tasks.gitPublishPush
